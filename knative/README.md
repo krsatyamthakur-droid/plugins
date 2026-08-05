@@ -84,3 +84,48 @@ The Prometheus plugin provides the following metric charts on KService and Revis
 | **Resources** | ✅ | ✅ | CPU usage (cores) and Memory usage (bytes) for pods matching the service/revision |
 
 The `podmonitor.yaml` file configures Prometheus to scrape the Knative `queue-proxy` sidecar (port 9091) on all pods with the `serving.knative.dev/revision` label.
+
+## Knative Eventing
+
+The plugin covers the core Eventing resources alongside Serving. Eventing installs
+from its own release YAML and does not require Serving, so the Eventing sidebar
+entries appear based on the `brokers.eventing.knative.dev` CRD rather than the
+Serving one.
+
+| View | What it shows | Who it is for |
+|---|---|---|
+| **Brokers** | Class, ingress URL, dead letter sink, ready state | Operators checking whether the event mesh endpoint is up and where failures land |
+| **Triggers** | Broker, filter summary, resolved subscriber, ready state | Anyone debugging "my events stopped arriving" |
+
+Both views are read-only. Brokers and Triggers route to Headlamp's built-in
+Custom Resource detail pages, and the Trigger page gains an **Event Routing**
+section that resolves the three things a raw YAML view makes you work out by
+hand: which Broker, which events, which subscriber.
+
+### Trigger filtering
+
+A Trigger can filter two ways, and the plugin surfaces which one is in effect:
+
+- `spec.filters`, the CloudEvents Subscriptions API dialect (`all`, `any`, `not`,
+  `exact`, `prefix`, `suffix`, `cesql`). Rendered as an expression tree.
+- `spec.filter.attributes`, the older exact-match map. Still supported, shown
+  with a deprecation note.
+
+When a Trigger sets both, the CRD documents that `filters` overrides `filter`.
+The detail view renders `filters` and warns that the legacy field is being
+ignored, because a Trigger with a stale `spec.filter` reads as though it filters
+on those attributes and does not.
+
+### Eventing Test Manifests
+
+```bash
+kubectl apply -f test-files/eventing/
+```
+
+* **`20-broker-healthy.yaml`**: Namespace, an in-memory Broker, a subscriber Service, and two healthy Triggers using `exact` and `prefix` filters.
+* **`21-trigger-edge-cases.yaml`**: The four states the UI has to tell apart. An unresolvable subscriber (warning state on the map, "Subscriber unresolved" chip in the list), a legacy `spec.filter`, a Trigger setting both filter fields, and a nested `any`-inside-`all` with a negation for the expression tree renderer.
+* **`22-pingsource-traffic.yaml`**: A PingSource emitting into the Broker every minute so Triggers actually fire, plus a second Broker configured with a dead letter sink and a retry policy.
+
+The map shows Brokers and Triggers as a separate **Knative Eventing** source
+group, with an edge from each Broker to the Triggers that subscribe to it.
+Cross-namespace `spec.brokerRef` references are labelled on the edge.

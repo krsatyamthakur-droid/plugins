@@ -1,0 +1,85 @@
+# The four Trigger states the UI has to distinguish. Apply
+# 20-broker-healthy.yaml first, these all attach to the same Broker.
+#
+#  - broken-subscriber: references a Service that does not exist, so
+#    SubscriberResolved goes False and the map node turns warning rather than
+#    disappearing.
+#  - legacy-filter: uses the deprecated spec.filter, which still works.
+#  - both-filters: sets spec.filter AND spec.filters. The API server accepts it,
+#    the data plane ignores spec.filter, and the detail view says so.
+#  - nested-filter: an any-inside-all with a negation, to exercise the
+#    expression tree renderer past one level.
+---
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: broken-subscriber
+  namespace: knative-eventing-test
+spec:
+  broker: shop
+  filters:
+    - exact:
+        type: dev.knative.samples.order.shipped
+  subscriber:
+    ref:
+      apiVersion: serving.knative.dev/v1
+      kind: Service
+      name: service-that-does-not-exist
+---
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: legacy-filter
+  namespace: knative-eventing-test
+spec:
+  broker: shop
+  filter:
+    attributes:
+      type: dev.knative.samples.order.created
+      source: /shop/checkout
+  subscriber:
+    ref:
+      apiVersion: serving.knative.dev/v1
+      kind: Service
+      name: order-processor
+---
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: both-filters
+  namespace: knative-eventing-test
+spec:
+  broker: shop
+  filter:
+    attributes:
+      type: this.value.is.ignored
+  filters:
+    - exact:
+        type: dev.knative.samples.order.created
+  subscriber:
+    ref:
+      apiVersion: serving.knative.dev/v1
+      kind: Service
+      name: order-processor
+---
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: nested-filter
+  namespace: knative-eventing-test
+spec:
+  broker: shop
+  filters:
+    - all:
+        - prefix:
+            type: dev.knative.samples.order.
+        - any:
+            - exact:
+                region: eu-west
+            - exact:
+                region: eu-central
+        - not:
+            suffix:
+              type: .test
+  subscriber:
+    uri: https://example.com/webhooks/orders

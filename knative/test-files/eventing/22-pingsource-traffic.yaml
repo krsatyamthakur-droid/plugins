@@ -1,0 +1,82 @@
+# A PingSource emitting into the Broker once a minute, so the Triggers actually
+# fire and the Broker's dead letter path can be observed. Also creates a Broker
+# with a dead letter sink pointing at a subscriber that always fails, which is
+# what populates status.deadLetterSinkUri in the Brokers list.
+---
+apiVersion: sources.knative.dev/v1
+kind: PingSource
+metadata:
+  name: order-ticker
+  namespace: knative-eventing-test
+spec:
+  schedule: '* * * * *'
+  contentType: application/json
+  data: '{"orderId":"poc-1","region":"eu-west"}'
+  sink:
+    ref:
+      apiVersion: eventing.knative.dev/v1
+      kind: Broker
+      name: shop
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: always-fails
+  namespace: knative-eventing-test
+spec:
+  template:
+    spec:
+      containers:
+        - image: ghcr.io/mccutchen/go-httpbin:v2.15.0
+          args: ['-port=8080']
+---
+apiVersion: eventing.knative.dev/v1
+kind: Broker
+metadata:
+  name: with-dlq
+  namespace: knative-eventing-test
+  annotations:
+    eventing.knative.dev/broker.class: MTChannelBasedBroker
+spec:
+  delivery:
+    retry: 2
+    backoffPolicy: exponential
+    backoffDelay: PT0.2S
+    deadLetterSink:
+      ref:
+        apiVersion: serving.knative.dev/v1
+        kind: Service
+        name: order-processor
+---
+# Routes at the /status/500 path on go-httpbin, so every delivery fails, the
+# two retries are exhausted, and the event lands in the Broker's dead letter
+# sink. Without this the always-fails Service would sit there unused.
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: to-failing-subscriber
+  namespace: knative-eventing-test
+spec:
+  broker: with-dlq
+  subscriber:
+    ref:
+      apiVersion: serving.knative.dev/v1
+      kind: Service
+      name: always-fails
+    uri: /status/500
+---
+# Feeds the dead-letter Broker, so the DLQ path has traffic to move.
+apiVersion: sources.knative.dev/v1
+kind: PingSource
+metadata:
+  name: dlq-ticker
+  namespace: knative-eventing-test
+spec:
+  schedule: '* * * * *'
+  contentType: application/json
+  data: '{"orderId":"poc-dlq"}'
+  sink:
+    ref:
+      apiVersion: eventing.knative.dev/v1
+      kind: Broker
+      name: with-dlq

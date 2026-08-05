@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-export * from './kservice';
-export * from './revision';
-export * from './domainMapping';
-export * from './clusterDomainClaim';
-export * from './eventing';
+export * from './broker';
+export * from './common';
+export * from './links';
+export * from './trigger';

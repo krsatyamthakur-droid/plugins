@@ -1,0 +1,59 @@
+# A healthy in-memory Broker with two Triggers using the current spec.filters
+# dialect. The two Triggers deliberately use different operators so the Triggers
+# list shows both an exact match and a prefix match side by side.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: knative-eventing-test
+---
+apiVersion: eventing.knative.dev/v1
+kind: Broker
+metadata:
+  name: shop
+  namespace: knative-eventing-test
+  annotations:
+    eventing.knative.dev/broker.class: MTChannelBasedBroker
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: order-processor
+  namespace: knative-eventing-test
+spec:
+  template:
+    spec:
+      containers:
+        - image: gcr.io/knative-releases/knative.dev/eventing/cmd/event_display
+---
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: orders-created
+  namespace: knative-eventing-test
+spec:
+  broker: shop
+  filters:
+    - exact:
+        type: dev.knative.samples.order.created
+  subscriber:
+    ref:
+      apiVersion: serving.knative.dev/v1
+      kind: Service
+      name: order-processor
+---
+apiVersion: eventing.knative.dev/v1
+kind: Trigger
+metadata:
+  name: orders-all
+  namespace: knative-eventing-test
+spec:
+  broker: shop
+  filters:
+    - prefix:
+        type: dev.knative.samples.order.
+  subscriber:
+    ref:
+      apiVersion: serving.knative.dev/v1
+      kind: Service
+      name: order-processor

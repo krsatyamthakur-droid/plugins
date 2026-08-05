@@ -17,6 +17,7 @@
 import { CustomResourceDefinition } from './resources/k8s/customResourceDefinition';
 
 const KNATIVE_SERVING_KSERVICE_CRD_NAME = 'services.serving.knative.dev';
+const KNATIVE_EVENTING_BROKER_CRD_NAME = 'brokers.eventing.knative.dev';
 
 function hasCrdInCluster(cluster: string, crdName: string): Promise<boolean> {
   return new Promise(resolve => {
@@ -52,15 +53,44 @@ function hasCrdInCluster(cluster: string, crdName: string): Promise<boolean> {
   });
 }
 
-export async function isKnativeInstalled(clusters: string[]): Promise<boolean> {
+async function hasCrdInEveryCluster(clusters: string[], crdName: string): Promise<boolean> {
   if (!clusters || clusters.length === 0) {
     return false;
   }
 
-  const results = await Promise.all(
-    clusters.map(cluster => hasCrdInCluster(cluster, KNATIVE_SERVING_KSERVICE_CRD_NAME))
-  );
+  const results = await Promise.all(clusters.map(cluster => hasCrdInCluster(cluster, crdName)));
 
-  // Consider Knative "installed" only if it exists in all selected clusters.
+  // Consider the component "installed" only if it exists in all selected clusters.
   return results.every(Boolean);
+}
+
+/**
+ * Whether Knative Serving is installed, detected via the KService CRD.
+ */
+export function isKnativeServingInstalled(clusters: string[]): Promise<boolean> {
+  return hasCrdInEveryCluster(clusters, KNATIVE_SERVING_KSERVICE_CRD_NAME);
+}
+
+/**
+ * Whether Knative Eventing is installed, detected via the Broker CRD.
+ *
+ * Eventing ships in its own release YAML and does not depend on Serving, so a
+ * cluster can have one, the other, or both. Probing only the Serving CRD, as
+ * this module used to, hid the whole plugin on Eventing-only clusters.
+ */
+export function isKnativeEventingInstalled(clusters: string[]): Promise<boolean> {
+  return hasCrdInEveryCluster(clusters, KNATIVE_EVENTING_BROKER_CRD_NAME);
+}
+
+/**
+ * Whether any part of Knative is installed. Used for the top-level sidebar
+ * entry, where either component is reason enough to show the menu.
+ */
+export async function isKnativeInstalled(clusters: string[]): Promise<boolean> {
+  const [serving, eventing] = await Promise.all([
+    isKnativeServingInstalled(clusters),
+    isKnativeEventingInstalled(clusters),
+  ]);
+
+  return serving || eventing;
 }
