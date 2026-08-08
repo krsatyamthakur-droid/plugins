@@ -1,0 +1,54 @@
+# A deliberately small ClusterQueue, so the Jobs in the lifecycle-*.yaml files
+# actually contend for quota instead of all being admitted immediately.
+#
+# 2 CPU total. The admitted Job takes 1, the blocked Job asks for 4.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: lifecycle-default
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: lifecycle-demo
+spec:
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: default
+  queueingStrategy: BestEffortFIFO
+  resourceGroups:
+    - coveredResources:
+        - cpu
+        - memory
+      flavors:
+        - name: lifecycle-default
+          resources:
+            - name: cpu
+              nominalQuota: "2"
+            - name: memory
+              nominalQuota: 4Gi
+  preemption:
+    withinClusterQueue: LowerPriority
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: lifecycle-queue
+  namespace: default
+spec:
+  clusterQueue: lifecycle-demo
+---
+# Priorities, so the preemption scenario has something to preempt with.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: WorkloadPriorityClass
+metadata:
+  name: lifecycle-low
+value: 100
+description: "Low priority, gets preempted in the lifecycle demo"
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: WorkloadPriorityClass
+metadata:
+  name: lifecycle-high
+value: 1000
+description: "High priority, does the preempting in the lifecycle demo"

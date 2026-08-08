@@ -1,0 +1,36 @@
+# Apply this only after low-priority-job from lifecycle-jobs.yaml is Admitted.
+#
+#   kubectl get workload -l kueue.x-k8s.io/job-uid --show-labels
+#
+# It requests the same 2 CPU at a higher priority, so Kueue preempts
+# low-priority-job to make room. That gives low-priority-job's Workload:
+#
+#   Evicted=True   reason Preempted
+#   Requeued=True  reason BackoffFinished
+#   status.requeueState.count incremented
+#   status.schedulingStats.evictions[] with reason Preempted
+#
+# which is the input for both the timeline and the eviction summary.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: preempting-job
+  namespace: default
+  labels:
+    kueue.x-k8s.io/queue-name: lifecycle-queue
+    kueue.x-k8s.io/priority-class: lifecycle-high
+spec:
+  parallelism: 1
+  completions: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: sleep
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          command: ["/bin/sh"]
+          args: ["-c", "sleep 120"]
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi

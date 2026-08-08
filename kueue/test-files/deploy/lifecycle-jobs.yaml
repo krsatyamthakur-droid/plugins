@@ -1,0 +1,116 @@
+# Four Jobs, each producing a Workload in a different lifecycle state.
+#
+# Apply lifecycle-clusterqueue.yaml first. Then apply this file and watch:
+#
+#   kubectl get workloads -w
+#
+# Expected end state, which is what the Lifecycle section renders:
+#
+#   admitted-job      Admitted then Running then Finished
+#   blocked-job       QuotaReserved=False, reason WaitingForQuota      -> Blocked
+#   inadmissible-job  QuotaReserved=False, reason NoMatchingFlavor     -> Inadmissible
+#   preempting-job    admits, and evicts low-priority-job on the way in
+#
+# The distinction between blocked-job and inadmissible-job is the whole point:
+# both look like "not admitted" in a conditions table, but the first clears on
+# its own once admitted-job finishes and the second never will.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: admitted-job
+  namespace: default
+  labels:
+    kueue.x-k8s.io/queue-name: lifecycle-queue
+spec:
+  parallelism: 1
+  completions: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: sleep
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          command: ["/bin/sh"]
+          args: ["-c", "sleep 60"]
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+---
+# Asks for more CPU than the whole ClusterQueue has spare while admitted-job
+# holds 1 of 2. Clears on its own once admitted-job completes.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: blocked-job
+  namespace: default
+  labels:
+    kueue.x-k8s.io/queue-name: lifecycle-queue
+spec:
+  parallelism: 1
+  completions: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: sleep
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          command: ["/bin/sh"]
+          args: ["-c", "sleep 30"]
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi
+---
+# Asks for a resource no flavor in the ClusterQueue covers. Never becomes
+# admissible, no matter what else finishes.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: inadmissible-job
+  namespace: default
+  labels:
+    kueue.x-k8s.io/queue-name: lifecycle-queue
+spec:
+  parallelism: 1
+  completions: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: sleep
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          command: ["/bin/sh"]
+          args: ["-c", "sleep 30"]
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+              nvidia.com/gpu: "1"
+---
+# Low priority, admitted first, then evicted when preempting-job arrives.
+# Produces the Evicted then Requeued pair the timeline collapses.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: low-priority-job
+  namespace: default
+  labels:
+    kueue.x-k8s.io/queue-name: lifecycle-queue
+    kueue.x-k8s.io/priority-class: lifecycle-low
+spec:
+  parallelism: 1
+  completions: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: sleep
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          command: ["/bin/sh"]
+          args: ["-c", "sleep 600"]
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi
