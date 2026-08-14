@@ -88,6 +88,11 @@ spec:
               cpu: "1"
               memory: 1Gi
               nvidia.com/gpu: "1"
+            # Extended resources are not overcommittable, so the API server
+            # rejects a request without a matching limit. Kueue never sees the
+            # Job at all without this.
+            limits:
+              nvidia.com/gpu: "1"
 ---
 # Low priority, admitted first, then evicted when preempting-job arrives.
 # Produces the Evicted then Requeued pair the timeline collapses.

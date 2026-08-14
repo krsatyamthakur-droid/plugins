@@ -1,4 +1,9 @@
-import { registerRoute, registerSidebarEntry } from '@kinvolk/headlamp-plugin/lib';
+import {
+  type DetailsViewSectionProps,
+  registerDetailsViewSection,
+  registerRoute,
+  registerSidebarEntry,
+} from '@kinvolk/headlamp-plugin/lib';
 import ClusterQueueDetail from './components/clusterqueues/Detail';
 import ClusterQueueList from './components/clusterqueues/List';
 import LocalQueueDetail from './components/localqueues/Detail';
@@ -6,6 +11,7 @@ import LocalQueueList from './components/localqueues/List';
 import ResourceFlavorDetail from './components/resourceflavors/Detail';
 import ResourceFlavorList from './components/resourceflavors/List';
 import WorkloadDetail from './components/workloads/Detail';
+import WorkloadDetailsSection from './components/workloads/WorkloadDetailsSection';
 import WorkloadList from './components/workloads/List';
 import { kueueRouteNames, kueueRoutePaths } from './utils/kueueRoutes';
 
@@ -108,3 +114,10 @@ registerRoute({
   exact: true,
   component: () => <WorkloadDetail />,
 });
+
+// The lifecycle and eviction views also attach to Headlamp's generic Custom
+// Resource page, so they render for Workloads reached outside the plugin's
+// own detail route.
+registerDetailsViewSection((props: DetailsViewSectionProps) => (
+  <WorkloadDetailsSection {...props} />
+));
