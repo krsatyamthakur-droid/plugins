@@ -81,15 +81,24 @@ branch was built, tested and operated end to end on a live cluster.
 
 ### Architecture constraint
 
-The plugin uses two distinct UI patterns, not one:
+A Workload can be reached by two different routes, and the lifecycle views have to render on
+both:
 
-- **Pattern A** — `ClusterQueue`, `LocalQueue` and `ResourceFlavor` get plugin-owned List and
-  Detail pages built on `ResourceListView` and `DetailsGrid`.
-- **Pattern B** — `Workload` has no dedicated resource class or pages at all. It is served by
-  `registerDetailsViewSection` injecting sections into Headlamp's generic Custom Resource page.
+- **The plugin's own pages** — `ClusterQueue`, `LocalQueue`, `ResourceFlavor` and `Workload`
+  each have a plugin-owned List and Detail page built on `ResourceListView` and `DetailsGrid`,
+  registered via `registerRoute` + `registerSidebarEntry` under the **Kueue** sidebar section.
+  Workload's class lives in `src/resources/workload.ts` and its pages in
+  `src/components/workloads/{List,Detail}.tsx`, added upstream in
+  [`b31ab3c`](https://github.com/krsatyamthakur-droid/plugins/commit/b31ab3c) (PR #924), the
+  direct parent of this branch.
+- **Headlamp's generic Custom Resource page** — reached through
+  *Custom Resources → kueue.x-k8s.io → Workload*, which knows nothing about the plugin.
+  `registerDetailsViewSection` injects `LifecycleSection` and `EvictionSummary` here so the same
+  views appear on that path too.
 
-Any Workload feature must therefore either live inside that injection point or first pay the
-cost of introducing a Workload resource class.
+The constraint that follows: the lifecycle views cannot assume the plugin's own Detail page is
+the only entry point. They are written as details-view sections keyed off the Workload object
+rather than as page-level components, so they render identically on both routes.
 
 ### Testing
 
