@@ -57,3 +57,129 @@ npm run tsc
 npm run lint
 npm run test
 ```
+
+## Workload Lifecycle — Proof of Concept
+
+This section records how the Workload lifecycle-derivation work on the
+[`kueue-lifecycle-poc`](https://github.com/krsatyamthakur-droid/plugins/tree/kueue-lifecycle-poc/kueue)
+branch was built, tested and operated end to end on a live cluster.
+
+### What it adds
+
+12 files, roughly 1,550 lines:
+
+| File | Lines | Purpose |
+| --- | --- | --- |
+| `src/resources/workloadLifecycle.ts` | 385 | `deriveLifecycleState` and `buildTimeline` |
+| `src/components/workloads/LifecycleSection.tsx` | 186 | Lifecycle details-view section |
+| `src/components/workloads/EvictionSummary.tsx` | 84 | Eviction details-view section |
+| `src/components/workloads/WorkloadDetailsSection.tsx` | 35 | Section registration wrapper |
+| `src/resources/workloadLifecycle.test.ts` | 344 | Unit tests for the above |
+| `src/components/workloads/*.stories.tsx` | 253 | Storybook stories for both sections |
+| `src/helpers/storybook.tsx` | 37 | Shared story helpers |
+| `test-files/deploy/lifecycle-*.yaml` | 211 | Three scenario manifests |
+
+### Architecture constraint
+
+The plugin uses two distinct UI patterns, not one:
+
+- **Pattern A** — `ClusterQueue`, `LocalQueue` and `ResourceFlavor` get plugin-owned List and
+  Detail pages built on `ResourceListView` and `DetailsGrid`.
+- **Pattern B** — `Workload` has no dedicated resource class or pages at all. It is served by
+  `registerDetailsViewSection` injecting sections into Headlamp's generic Custom Resource page.
+
+Any Workload feature must therefore either live inside that injection point or first pay the
+cost of introducing a Workload resource class.
+
+### Testing
+
+31 test cases across 4 suites, all passing — covering lifecycle-state derivation
+(`deriveLifecycleState`), timeline construction from Workload status conditions
+(`buildTimeline`), event collapsing (`collapseRepeats`), and the eviction helpers:
+
+```bash
+npx vitest run -c node_modules/@kinvolk/headlamp-plugin/config/vite.config.mjs
+```
+
+Run against the whole plugin, the same command reports 53 tests across 5 files — the 31 above
+are the ones this branch adds.
+
+<!-- TODO(images): save the vitest screenshot as poc-images/01-test-suite.png, then restore:
+![Test suite run](poc-images/01-test-suite.png)
+-->
+
+```
+ ✓ src/utils/kueueApi.test.ts              (4 tests)
+ ✓ src/resources/clusterQueue.test.ts      (3 tests)
+ ✓ src/resources/workloadLifecycle.test.ts (31 tests)
+ ✓ src/resources/localQueue.test.ts        (5 tests)
+ ✓ src/resources/workloadFormatters.test.ts (10 tests)
+
+ Test Files  5 passed (5)
+      Tests  53 passed (53)
+```
+
+### Live verification
+
+The plugin was run against a real Kueue installation rather than fixtures. The environment is a
+dedicated kind cluster created with `extraMounts`, binding the plugin directory into the node so
+a rebuild is picked up by a browser refresh. Kueue v0.19.0 is installed and healthy. Headlamp
+runs in-cluster, installed via Helm, authenticated with a ServiceAccount token and reached over
+port-forward — the deployment path administrators actually use, rather than the simpler
+Docker-on-host route.
+
+```bash
+kubectl apply -f test-files/deploy/lifecycle-clusterqueue.yaml
+kubectl apply -f test-files/deploy/lifecycle-jobs.yaml
+kubectl apply -f test-files/deploy/lifecycle-preemption.yaml
+```
+
+These produce admitted, quota-blocked, inadmissible and preempted Workloads simultaneously,
+which is what makes the derivation testable: the same cluster, at one timestamp, holds every
+state the section distinguishes.
+
+#### Blocked vs. Inadmissible
+
+<!-- TODO(images): save the side-by-side Lifecycle panels as poc-images/02-blocked-vs-inadmissible.png, then restore:
+![Blocked and Inadmissible Lifecycle panels side by side](poc-images/02-blocked-vs-inadmissible.png)
+-->
+
+The two states the feature exists to separate, side by side. Both Workloads report
+`QuotaReserved: False` and both read as "not admitted" in a conditions table. The left one
+clears by itself when quota frees up; the right one never will, because no flavor in the
+ClusterQueue covers `nvidia.com/gpu`. The plugin labels them **Blocked** and **Inadmissible**
+respectively, and shows which status field each was derived from.
+
+#### Rendered panel vs. raw API object
+
+<!-- TODO(images): save the panel-vs-kubectl screenshot as poc-images/03-panel-vs-raw-conditions.png, then restore:
+![Rendered Lifecycle panel next to raw kubectl conditions output](poc-images/03-panel-vs-raw-conditions.png)
+-->
+
+The rendered panel next to the raw Workload object fetched from the API at the same moment:
+
+```bash
+kubectl get workload job-inadmissible-job-980b6 \
+  -o jsonpath='{.status.conditions}' | python3 -m json.tool
+```
+
+The API response contains no stage, no phase and no ordering — only a flat list of conditions.
+Every word in the panel is derived, and the `via QuotaReserved` label makes each derivation
+traceable back to the field it came from.
+
+#### Eviction timeline
+
+![Eviction timeline rendered by EvictionSummary](poc-images/04-eviction-timeline.png)
+
+### Constraints and defects found
+
+**Feature gate.** Kueue only reports the granular `WaitingForQuota` and `NoMatchingFlavor`
+reasons when the `UnadmittedWorkloadsObservability` feature gate is enabled. Without it,
+`QuotaReserved` carries a generic reason and the Blocked/Inadmissible distinction degrades to
+**Pending**. Any upstream version of this work needs to detect that and say so in the UI rather
+than silently showing less.
+
+**Defect in the test manifests.** `inadmissible-job` requested `nvidia.com/gpu` without a
+matching limit, so the API server rejected the Job and Kueue never saw it — the scenario
+demonstrating `NoMatchingFlavor` was the one scenario that could not be applied. Fixed in
+[`7bd7408`](https://github.com/krsatyamthakur-droid/plugins/commit/7bd7408).
