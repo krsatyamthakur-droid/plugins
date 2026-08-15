@@ -104,20 +104,7 @@ npx vitest run -c node_modules/@kinvolk/headlamp-plugin/config/vite.config.mjs
 Run against the whole plugin, the same command reports 53 tests across 5 files — the 31 above
 are the ones this branch adds.
 
-<!-- TODO(images): save the vitest screenshot as poc-images/01-test-suite.png, then restore:
-![Test suite run](poc-images/01-test-suite.png)
--->
-
-```
- ✓ src/utils/kueueApi.test.ts              (4 tests)
- ✓ src/resources/clusterQueue.test.ts      (3 tests)
- ✓ src/resources/workloadLifecycle.test.ts (31 tests)
- ✓ src/resources/localQueue.test.ts        (5 tests)
- ✓ src/resources/workloadFormatters.test.ts (10 tests)
-
- Test Files  5 passed (5)
-      Tests  53 passed (53)
-```
+![Test suite run: 5 files, 53 tests passed, including 31 in workloadLifecycle.test.ts](poc-images/01-test-suite.png)
 
 ### Live verification
 
@@ -140,9 +127,7 @@ state the section distinguishes.
 
 #### Blocked vs. Inadmissible
 
-<!-- TODO(images): save the side-by-side Lifecycle panels as poc-images/02-blocked-vs-inadmissible.png, then restore:
 ![Blocked and Inadmissible Lifecycle panels side by side](poc-images/02-blocked-vs-inadmissible.png)
--->
 
 The two states the feature exists to separate, side by side. Both Workloads report
 `QuotaReserved: False` and both read as "not admitted" in a conditions table. The left one
@@ -152,11 +137,9 @@ respectively, and shows which status field each was derived from.
 
 #### Rendered panel vs. raw API object
 
-<!-- TODO(images): save the panel-vs-kubectl screenshot as poc-images/03-panel-vs-raw-conditions.png, then restore:
-![Rendered Lifecycle panel next to raw kubectl conditions output](poc-images/03-panel-vs-raw-conditions.png)
--->
+![Raw Workload conditions returned by kubectl: a flat list with no stage, phase or ordering](poc-images/03-panel-vs-raw-conditions.png)
 
-The rendered panel next to the raw Workload object fetched from the API at the same moment:
+The same Workload as the left-hand panel above, fetched raw from the API at the same moment:
 
 ```bash
 kubectl get workload job-inadmissible-job-980b6 \
