@@ -15,12 +15,32 @@
  */
 
 import { Router } from '@kinvolk/headlamp-plugin/lib';
-import { formatClusterPathParam, getSelectedClusters } from '@kinvolk/headlamp-plugin/lib/cluster';
 
 /**
  * Builds the `<plural>.<group>` CRD identifier Headlamp's custom resource
  * routes expect, for example `triggers.eventing.knative.dev`.
  */
+function getSelectedClustersFromLocation(): string[] {
+  // Headlamp cluster context is encoded as `/c/<clusterGroup>` where clusterGroup
+  // can be `a+b+...`. In Electron, routing uses the hash; in web, the pathname.
+  const rawPath =
+    typeof window === 'undefined'
+      ? ''
+      : window.location.hash?.startsWith('#')
+      ? window.location.hash.slice(1)
+      : window.location.pathname;
+
+  const match = rawPath.match(/\/c\/([^/]+)/);
+  const clusterGroup = match?.[1];
+  return clusterGroup ? clusterGroup.split('+') : [];
+}
+
+function formatClusterPathParam(selectedClusters: string[], currentCluster?: string): string {
+  if (!currentCluster) return selectedClusters.join('+');
+  if (selectedClusters.length === 0) return currentCluster;
+  return [currentCluster, ...selectedClusters.filter(c => c !== currentCluster)].join('+');
+}
+
 function getCrdName(apiName: string, apiVersion: string): string {
   const group = apiVersion.includes('/') ? apiVersion.split('/')[0] : '';
   return group ? `${apiName}.${group}` : apiName;
@@ -36,8 +56,13 @@ function getCrdName(apiName: string, apiVersion: string): string {
  * The cluster path segment goes through `formatClusterPathParam`, because with
  * several clusters selected Headlamp's routes expect `a+b`, not a bare cluster
  * name. Passing `this.cluster` straight through produces a link that 404s in
- * multi-cluster mode. `KubeObject.getDetailsLink` does the same thing for
- * built-in kinds.
+ * multi-cluster mode.
+ *
+ * Both helpers are implemented here rather than imported from
+ * `@kinvolk/headlamp-plugin/lib/cluster`: that submodule is not one of the
+ * externals the Headlamp plugin runtime provides, so it resolves to undefined
+ * at run time and reading a name off it throws. `domainMapping.ts` and
+ * `clusterDomainClaim.ts` already carry the same local copies for this reason.
  */
 export function getEventingDetailsLink(options: {
   apiName: string;
@@ -47,7 +72,7 @@ export function getEventingDetailsLink(options: {
   cluster?: string;
 }): string {
   return Router.createRouteURL('customresource', {
-    cluster: formatClusterPathParam(getSelectedClusters(), options.cluster),
+    cluster: formatClusterPathParam(getSelectedClustersFromLocation(), options.cluster),
     crd: getCrdName(options.apiName, options.apiVersion),
     namespace: options.namespace || '-',
     crName: options.name,
