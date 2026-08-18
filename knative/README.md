@@ -159,78 +159,171 @@ The map shows Brokers and Triggers as a separate **Knative Eventing** source
 group, with an edge from each Broker to the Triggers that subscribe to it.
 Cross-namespace `spec.brokerRef` references are labelled on the edge.
 
-## Proof of Concept: running Knative Eventing end to end
+## Proof of Concept: Knative Eventing, deployed and debugged end to end
 
-This section records what happened when the Eventing Broker and Trigger work
-was deployed and operated against a live cluster, and the defects that surfaced
-only there. Screenshots are in [`screenshot/`](screenshot/).
+This section records what happened when the Eventing Broker and Trigger work was
+deployed and operated against a live cluster, and the defects that surfaced only
+there.
 
-### Environment
+### What I validated
 
-A dedicated `kind` cluster created with `extraMounts`, binding this plugin
-directory into the node so a rebuild is picked up by a browser refresh. Knative
-Serving v1.23.0 with Kourier and Knative Eventing v1.23.0 (CRDs, core, in-memory
-channel, mt-channel-broker), both healthy. Headlamp v0.44.0 runs in-cluster,
-installed via Helm, authenticated with a ServiceAccount token and reached over
-port-forward, rather than the simpler Docker-on-host route.
+I worked from the Knative Eventing branch `knative-eventing-poc` — 26 files,
+2,361 insertions, adding Broker and Trigger support to a plugin that until now
+covered only Serving. The base commit is authored by Shivam; I took the branch on
+as a reviewer and operator rather than as its author, and my own work on it is
+four commits on top.
 
-Applying `test-files/eventing/` produces, in one cluster at one timestamp, every
-state the UI has to tell apart: two healthy Brokers, one with a dead-letter sink
-and retry policy; Triggers with `exact`, `prefix`, legacy-attribute and nested
-`any`-inside-`all`-with-`not` filters; a Trigger setting both `spec.filters` and
-`spec.filter`; a Trigger pointing at a Service that does not exist; and a Trigger
-routing to a permanently failing subscriber through the dead-letter path. Five
-`Ready=True`, two intentionally `Ready=False`.
+The branch adds three pure-logic modules that encode upstream Knative semantics
+rather than re-deriving them: `buildFilterView` in `src/utils/triggerFilter.ts`,
+which applies the CRD's own documented precedence ("In the event of users
+specifying both Filter and Filters, then the latter will override the former");
+`resolveBrokerRef` in `src/utils/brokerRef.ts`, which mirrors the precedence in
+upstream's `pkg/broker/filter/filter_handler.go`; and `resolveSink` /
+`describeSink` in `src/utils/sink.ts`. On top of those sit the Broker and Trigger
+list views, a recursive `FilterExpression` renderer for `all` / `any` / `not` /
+`cesql` trees, and a new Knative Eventing map group.
 
-The suite is 55 tests across 7 files, all passing.
+Running it surfaced the architectural constraint that shapes any future Trigger
+work, and it is the mirror image of the constraint in Headlamp's Kueue plugin.
+There, a Workload is reachable by two routes, so a feature must be a
+details-view section rather than a page-level component or it goes silently
+missing on one path. Here the opposite holds. The branch registered the event
+routing summary through `registerDetailsViewSection` and gave Trigger no route of
+its own, so its detail page was Headlamp's generic Custom Resource page. Headlamp
+0.44 does not mount plugin detail sections on that page. The section was
+registered correctly, built correctly, and never rendered: a Trigger's filtering,
+subscriber and dead-letter sink were invisible in the UI, which is the entire
+feature. Any per-Trigger work must own a route, backed by `DetailsGrid`, the way
+KService and Revision already do in this same plugin.
 
-### What deploying it surfaced
+A second constraint is documented in the branch and worth carrying forward:
+`src/eventingMap.tsx` builds the Broker-to-Trigger edge by hand because
+`registerResourceRelationProvider`, the natural home for an edge spanning two map
+sources, exists on Headlamp `main` but is not exported by
+`@kinvolk/headlamp-plugin` 0.14.0, the version this plugin pins. The cost is that
+the Trigger map source must also list Brokers.
 
-Five things, none reachable by reading the code or running the tests.
+### Testing
 
-**1. The test manifests require Serving.** Every subscriber and dead-letter
-target in `test-files/eventing/` is a `serving.knative.dev/v1` Service. On an
-Eventing-only cluster those applies fail outright and any Trigger that did apply
-reports an unresolved subscriber. Documented in the Prerequisites section above.
+33 test cases covering filter precedence and expression parsing
+(`triggerFilter`), sink resolution and non-http(s) URI rejection (`sink`), and
+broker-reference precedence (`brokerRef`), bringing the plugin's suite to 55
+tests across 7 files, all passing.
 
-**2. Install order matters.** `eventing-controller` caches API discovery at
-startup and does not retry, so installing Serving after Eventing leaves Triggers
-reporting the subscriber as not found even once it is Ready. Recovery steps are
-in the Prerequisites section above.
+![Test suite: 55 tests across 7 files, all passing](screenshot/01-tests.png)
 
-**3. Mounting `dist` alone produces a plugin that never registers.** Headlamp
-reads `package.json` from each plugin directory to register it. `npm run build`
-emits only `main.js`, so a hostPath mount of `dist` gives Headlamp a bundle it
-serves but never mounts: no sidebar entry, no routes, no detail sections, and
-nothing in the browser console to explain it. Copy `package.json` alongside
-`main.js`, or mount the output of `headlamp-plugin package`.
+The suite's limits matter as much as its coverage. Two of the defects below
+survive a clean `tsc`, a green build and all 55 tests, because the imports exist
+as types and the suite covers the pure helper modules without ever rendering a
+list or a detail page against live objects.
 
-**4. Both Eventing list pages crashed.** `getEventingDetailsLink` imported
-`formatClusterPathParam` and `getSelectedClusters` from
-`@kinvolk/headlamp-plugin/lib/cluster`, which is not among the externals the
-Headlamp plugin runtime provides. It resolves to `undefined`, and every row of
-both lists renders a details link, so neither page rendered at all. The plugin's
-own `domainMapping.ts` and `clusterDomainClaim.ts` already carry private local
-copies of these helpers for this exact reason. Fixed by following that pattern.
+### Live verification
 
-**5. The event routing summary rendered nowhere.** It was registered with
-`registerDetailsViewSection` and Trigger owned no route, so its detail page was
-Headlamp's generic Custom Resource page. Headlamp 0.44 does not mount plugin
-detail sections there, so a Trigger's filtering, subscriber and dead-letter sink
-were invisible. Fixed by giving Trigger a plugin-owned route backed by
-`DetailsGrid`, as KService and Revision already do.
+The environment is a dedicated `kind` cluster created with `extraMounts`, binding
+the plugin directory into the node so a rebuild is picked up by a browser
+refresh. Knative Serving v1.23.0 with Kourier and Knative Eventing v1.23.0 are
+installed and healthy. Headlamp v0.44.0 runs in-cluster, installed via Helm,
+authenticated with a ServiceAccount token and reached over port-forward — the
+deployment path administrators actually use, rather than the simpler
+Docker-on-host route.
 
-Defects 4 and 5 both survive a clean `tsc`, a green build and all 55 unit tests:
-the imports exist as types, and the suite covers the pure helper modules without
-rendering a list or a detail page against live objects.
+Applying the three `test-files/eventing` manifests produces, in one cluster at
+one timestamp, every state the UI has to tell apart: two healthy Brokers, one
+with a dead-letter sink and retry policy; Triggers with `exact`, `prefix`,
+legacy-attribute and deeply nested `any`-inside-`all`-with-`not` filters; a
+Trigger that sets both `spec.filters` and `spec.filter`; a Trigger pointing at a
+Service that does not exist; and a Trigger routing to a permanently failing
+subscriber through the dead-letter path. Five `Ready=True` and exactly two
+intentionally `Ready=False`.
 
-### What the screenshots show
+![Brokers and Triggers on the live cluster](screenshot/02-cluster-state.png)
 
-| Screenshot | What it demonstrates |
-|---|---|
-| [`01-tests.png`](screenshot/01-tests.png) | 55 tests across 7 files, all passing |
-| [`02-cluster-state.png`](screenshot/02-cluster-state.png) | Brokers and Triggers on the live cluster; `both-filters` reports `Ready=True` with a blank reason, indistinguishable from a correctly configured Trigger |
-| [`03-triggers-list.png`](screenshot/03-triggers-list.png) | The Triggers list: filter summaries per row, `Subscriber unresolved` chips, and `both-filters` rendered in the warning colour |
-| [`04-both-filters.png`](screenshot/04-both-filters.png) | The Trigger detail page, warning that `spec.filter` is set and ignored, with the filter that actually applies below it |
-| [`05-panel-vs-yaml.png`](screenshot/05-panel-vs-yaml.png) | The same panel beside the raw object: the YAML carries both filter fields and nothing marking which one wins |
-| [`06-nested-filter.png`](screenshot/06-nested-filter.png) | The recursive expression renderer on `all` / `any` / `not`, three levels deep |
+Note `both-filters` in that output: `Ready=True`, blank reason, indistinguishable
+from a correctly configured Trigger.
+
+The state this feature exists to expose is exactly that Trigger. The API server
+accepts a Trigger that sets `spec.filter` and `spec.filters` together and reports
+no error; the data plane silently ignores the legacy field. Nothing in `kubectl
+get trigger`, in the seven status conditions the object carries, or in the raw
+YAML indicates which filter is live. In a conditions table that Trigger reads as
+perfectly healthy.
+
+The plugin surfaces the override as an explicit warning, and colours the row in
+the list so an operator scanning a namespace sees it without opening anything.
+
+![Triggers list with filter summaries and unresolved-subscriber chips](screenshot/03-triggers-list.png)
+
+![Trigger detail: spec.filter is set and ignored](screenshot/04-both-filters.png)
+
+![The same panel beside the raw object](screenshot/05-panel-vs-yaml.png)
+
+The YAML carries `filter.attributes.type: this.value.is.ignored` alongside
+`filters`, with nothing marking which one wins. The panel is the only place it is
+stated. That is the difference between reading the object and understanding it.
+
+The recursive renderer handles the nested case the list column can only summarise
+as `all(3)`:
+
+![Nested filter expression, three levels deep](screenshot/06-nested-filter.png)
+
+### The five defects deploying surfaced
+
+None is reachable by reading the code or running the tests.
+
+**1. The Eventing test manifests require Serving, contradicting the README.** The
+README stated that Eventing "installs from its own release YAML and does not
+require Serving" — true of the plugin's sidebar-visibility logic, which is
+precisely what this branch fixes by splitting `isKnativeInstalled` into
+`isKnativeServingInstalled` and `isKnativeEventingInstalled` and OR-ing them, so
+an Eventing-only cluster no longer hides the entire Knative sidebar. It is not
+true of the demo manifests: every subscriber and dead-letter target across all
+three files is a `serving.knative.dev/v1` Service. Without Serving those applies
+fail outright and every Trigger reports "Subscriber unresolved" — not because
+anything is broken, but because the subscriber never existed.
+
+**2. Install order matters, because the Eventing controller caches API discovery
+at startup.** With Serving installed after Eventing, Triggers kept reporting that
+`order-processor` was not found despite the Service existing and being Ready;
+`eventing-controller` had started before the `serving.knative.dev` API existed and
+does not retry discovery. Restarting the controller and force-resyncing the
+Triggers clears it. Install Serving before Eventing.
+
+**3. Mounting the plugin's `dist` directory alone produces a plugin that loads but
+never registers.** Headlamp reads `package.json` from each plugin directory to
+register it, and `npm run build` emits only `main.js`. The result is a bundle
+Headlamp serves and lists at `/plugins` but never mounts: no sidebar entry, no
+routes, no detail sections, and nothing in the browser console to explain the
+absence. This one cost the most time to find precisely because every server-side
+check passes.
+
+**4. Both Eventing list pages crashed on a live cluster.**
+`getEventingDetailsLink` imported `formatClusterPathParam` and
+`getSelectedClusters` from `@kinvolk/headlamp-plugin/lib/cluster`, which is not
+among the externals the Headlamp plugin runtime provides. It resolves to
+`undefined`, and reading either name off it throws. Every row of both lists
+renders a details link, so neither page rendered at all. The plugin's own
+`domainMapping.ts` and `clusterDomainClaim.ts` already carry private local copies
+of these two helpers for exactly this reason; the Eventing code imported them
+instead. Fixed by following the established pattern.
+
+**5. The event routing summary rendered nowhere**, for the architectural reason
+above. Fixed by giving Trigger a plugin-owned detail route backed by
+`DetailsGrid`. Two smaller constraints fell out of that fix, both learned from
+the Serving side of the plugin: the detail route must be registered *before* the
+list route, or `/knative/triggers` matches `/knative/triggers/:namespace/:name`
+first and the list re-renders in place of the detail page; and the list must link
+to it with a `Link` carrying `routeName`, `params` and `activeCluster`, because
+`activeCluster` supplies the `/c/<cluster>` path segment and a URL built without
+it does not resolve.
+
+The first two are environment and documentation gotchas rather than code defects,
+but they make the difference between a demo that works first time and one that
+appears completely broken. The last three are defects in the plugin, and the last
+two make the Eventing feature unusable.
+
+Code fixes are in commits `cab83d2f`, `d07563c6` and `2ca33eff`.
+
+None of this was reachable by reading the code. The existing suite tests pure
+functions well and never renders a component against a live object, so the two
+defects that made this feature unusable were invisible to a green build, a clean
+type check and 55 passing tests.
