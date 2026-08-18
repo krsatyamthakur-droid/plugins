@@ -158,3 +158,79 @@ kubectl apply -f test-files/eventing/
 The map shows Brokers and Triggers as a separate **Knative Eventing** source
 group, with an edge from each Broker to the Triggers that subscribe to it.
 Cross-namespace `spec.brokerRef` references are labelled on the edge.
+
+## Proof of Concept: running Knative Eventing end to end
+
+This section records what happened when the Eventing Broker and Trigger work
+was deployed and operated against a live cluster, and the defects that surfaced
+only there. Screenshots are in [`screenshot/`](screenshot/).
+
+### Environment
+
+A dedicated `kind` cluster created with `extraMounts`, binding this plugin
+directory into the node so a rebuild is picked up by a browser refresh. Knative
+Serving v1.23.0 with Kourier and Knative Eventing v1.23.0 (CRDs, core, in-memory
+channel, mt-channel-broker), both healthy. Headlamp v0.44.0 runs in-cluster,
+installed via Helm, authenticated with a ServiceAccount token and reached over
+port-forward, rather than the simpler Docker-on-host route.
+
+Applying `test-files/eventing/` produces, in one cluster at one timestamp, every
+state the UI has to tell apart: two healthy Brokers, one with a dead-letter sink
+and retry policy; Triggers with `exact`, `prefix`, legacy-attribute and nested
+`any`-inside-`all`-with-`not` filters; a Trigger setting both `spec.filters` and
+`spec.filter`; a Trigger pointing at a Service that does not exist; and a Trigger
+routing to a permanently failing subscriber through the dead-letter path. Five
+`Ready=True`, two intentionally `Ready=False`.
+
+The suite is 55 tests across 7 files, all passing.
+
+### What deploying it surfaced
+
+Five things, none reachable by reading the code or running the tests.
+
+**1. The test manifests require Serving.** Every subscriber and dead-letter
+target in `test-files/eventing/` is a `serving.knative.dev/v1` Service. On an
+Eventing-only cluster those applies fail outright and any Trigger that did apply
+reports an unresolved subscriber. Documented in the Prerequisites section above.
+
+**2. Install order matters.** `eventing-controller` caches API discovery at
+startup and does not retry, so installing Serving after Eventing leaves Triggers
+reporting the subscriber as not found even once it is Ready. Recovery steps are
+in the Prerequisites section above.
+
+**3. Mounting `dist` alone produces a plugin that never registers.** Headlamp
+reads `package.json` from each plugin directory to register it. `npm run build`
+emits only `main.js`, so a hostPath mount of `dist` gives Headlamp a bundle it
+serves but never mounts: no sidebar entry, no routes, no detail sections, and
+nothing in the browser console to explain it. Copy `package.json` alongside
+`main.js`, or mount the output of `headlamp-plugin package`.
+
+**4. Both Eventing list pages crashed.** `getEventingDetailsLink` imported
+`formatClusterPathParam` and `getSelectedClusters` from
+`@kinvolk/headlamp-plugin/lib/cluster`, which is not among the externals the
+Headlamp plugin runtime provides. It resolves to `undefined`, and every row of
+both lists renders a details link, so neither page rendered at all. The plugin's
+own `domainMapping.ts` and `clusterDomainClaim.ts` already carry private local
+copies of these helpers for this exact reason. Fixed by following that pattern.
+
+**5. The event routing summary rendered nowhere.** It was registered with
+`registerDetailsViewSection` and Trigger owned no route, so its detail page was
+Headlamp's generic Custom Resource page. Headlamp 0.44 does not mount plugin
+detail sections there, so a Trigger's filtering, subscriber and dead-letter sink
+were invisible. Fixed by giving Trigger a plugin-owned route backed by
+`DetailsGrid`, as KService and Revision already do.
+
+Defects 4 and 5 both survive a clean `tsc`, a green build and all 55 unit tests:
+the imports exist as types, and the suite covers the pure helper modules without
+rendering a list or a detail page against live objects.
+
+### What the screenshots show
+
+| Screenshot | What it demonstrates |
+|---|---|
+| [`01-tests.png`](screenshot/01-tests.png) | 55 tests across 7 files, all passing |
+| [`02-cluster-state.png`](screenshot/02-cluster-state.png) | Brokers and Triggers on the live cluster; `both-filters` reports `Ready=True` with a blank reason, indistinguishable from a correctly configured Trigger |
+| [`03-triggers-list.png`](screenshot/03-triggers-list.png) | The Triggers list: filter summaries per row, `Subscriber unresolved` chips, and `both-filters` rendered in the warning colour |
+| [`04-both-filters.png`](screenshot/04-both-filters.png) | The Trigger detail page, warning that `spec.filter` is set and ignored, with the filter that actually applies below it |
+| [`05-panel-vs-yaml.png`](screenshot/05-panel-vs-yaml.png) | The same panel beside the raw object: the YAML carries both filter fields and nothing marking which one wins |
+| [`06-nested-filter.png`](screenshot/06-nested-filter.png) | The recursive expression renderer on `all` / `any` / `not`, three levels deep |
