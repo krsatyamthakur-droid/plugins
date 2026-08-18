@@ -18,6 +18,7 @@ import {
   ResourceListView,
   type ResourceTableColumn,
 } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import { Link } from '@kinvolk/headlamp-plugin/lib/components/common';
 import type { KubeObject } from '@kinvolk/headlamp-plugin/lib/k8s/cluster';
 import { Chip, Tooltip, Typography } from '@mui/material';
 import { useMemo } from 'react';
@@ -34,7 +35,21 @@ function useTriggerColumns(clusters: string[]): Column[] {
 
   return useMemo<Column[]>(
     () => [
-      'name',
+      {
+        id: 'name',
+        label: 'Name',
+        gridTemplate: 'auto',
+        getValue: item => item.metadata?.name ?? '',
+        render: item => (
+          <Link
+            routeName="knativeTriggerDetails"
+            params={{ namespace: item.metadata.namespace, name: item.metadata.name }}
+            activeCluster={item.cluster}
+          >
+            {item.metadata.name}
+          </Link>
+        ),
+      },
       'namespace',
       ...(showClusterColumn ? (['cluster'] as const) : []),
       {

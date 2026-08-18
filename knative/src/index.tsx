@@ -31,6 +31,7 @@ import React from 'react';
 import { ClusterDomainClaimsList } from './components/clusterdomainclaims/List';
 import { DomainMappingsList } from './components/domainmappings/List';
 import { BrokersList } from './components/eventing/brokers/List';
+import { TriggerDetail } from './components/eventing/triggers/Detail';
 import { TriggerDetailsSection } from './components/eventing/triggers/DetailsSection';
 import { TriggersList } from './components/eventing/triggers/List';
 import { KServiceDetail } from './components/kservices/Detail';
@@ -233,6 +234,13 @@ registerRoute({
 });
 
 registerRoute({
+  path: '/knative/triggers/:namespace/:name',
+  sidebar: 'triggers',
+  name: 'knativeTriggerDetails',
+  component: withQueryClient(TriggerDetail),
+});
+
+registerRoute({
   path: '/knative/triggers',
   sidebar: 'triggers',
   name: 'knativeTriggers',
@@ -242,8 +250,10 @@ registerRoute({
 registerMapSource(knativePluginSource);
 registerMapSource(knativeEventingSource);
 
-// Trigger detail pages use Headlamp's generic Custom Resource view, so the event
-// routing summary is injected into it rather than owning a route.
+// Triggers own a detail route (see components/eventing/triggers/Detail.tsx).
+// This section is kept registered so that a Trigger reached through Headlamp's
+// generic Custom Resource page still shows event routing on Headlamp builds
+// that do mount plugin detail sections there; 0.44 does not.
 registerDetailsViewSection((props: DetailsViewSectionProps) => (
   <TriggerDetailsSection {...props} />
 ));
