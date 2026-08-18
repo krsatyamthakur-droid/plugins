@@ -118,6 +118,35 @@ on those attributes and does not.
 
 ### Eventing Test Manifests
 
+#### Prerequisites
+
+The Eventing plugin views themselves need only Eventing installed. The test
+manifests additionally need **Knative Serving**, because every subscriber and
+dead-letter target they reference is a `serving.knative.dev/v1` Service
+(`order-processor`, `always-fails`). Without Serving, those applies fail with
+`no matches for kind "Service" in version "serving.knative.dev/v1"`, and any
+Trigger that did apply reports "Subscriber unresolved" — not because the plugin
+is wrong, but because the subscriber never existed.
+
+**Install Serving before Eventing.** The `eventing-controller` resolves
+subscriber references through API discovery that it caches at startup and does
+not retry. If Eventing starts first, Triggers keep reporting
+
+```
+failed to get object .../order-processor: services.serving.knative.dev "order-processor" not found
+```
+
+even after Serving is installed and the Service is Ready. If you hit this, force
+the controller to rediscover:
+
+```bash
+kubectl rollout restart deployment/eventing-controller -n knative-eventing
+kubectl rollout status deployment/eventing-controller -n knative-eventing --timeout=90s
+kubectl annotate trigger --all -n knative-eventing-test force-resync="$(date +%s)" --overwrite
+```
+
+#### Applying
+
 ```bash
 kubectl apply -f test-files/eventing/
 ```
